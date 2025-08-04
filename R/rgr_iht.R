@@ -1,20 +1,29 @@
 rgr_iht <- function(model = NULL, data = NULL, rgcontraints = NULL, constraints = NULL){
 
-  iht_df <- vector("list", sum(1, length(rgcontraints)))
-  iht <- restriktor::iht(model, constraints = constraints)
+  # Set up data storage lists
+  iht_df <- vector("list", sum(1, length(rgcontraints))) # tidy iht results
+  rg_iht <- vector(mode = "list", length = length(rgcontraints)) # rg_iht models
 
-  rg_iht <- vector(mode = "list", length = length(rgcontraints))
+  # Run iht with full constraints
+  iht <- restriktor::iht(model, constraints = constraints)
+  iht_df[[1]] <- extract_iht(iht, modname = "iht", constr = constraints)
+
+  # Run iht with reduced graph constraints
   for (i in 1:length(rgcontraints)){
-    rgc <- rgcontraints[i]
-    rg_iht[i] <- restriktor::iht(model, constraints = rgc)
+    rg_iht[[i]] <- restriktor::iht(model, constraints = rgcontraints[[i]])
+    iht_df[[1 + i]] <- extract_iht(rg_iht[[i]], modname = paste0("rg_iht", i), constr = rgcontraints[[i]])
+
   }
 
-  return(list(iht = iht, rg_iht = rg_iht))
+  # Combine tidy results inot one dataframe
+  iht_df <- do.call(dplyr::bind_rows, iht_df)
 
+  # Return results
+  return(list(iht_df = iht_df, iht = iht, rg_iht = rg_iht))
 }
 
 
-extract_iht <- function(ihtres){
+extract_iht <- function(ihtres, modname = "", constr = ""){
 
   # Global
   global_Ts <- ihtres$global$Ts
@@ -67,7 +76,7 @@ extract_iht <- function(ihtres){
   names(B_ure) <- paste0("B_ure_", names(B_ure))
   B_df <- cbind(B_df, t(as.data.frame(B_ure)))
 
-  # Global
+  # Type C
   C_Ts <- ihtres$C$Ts
   C_pval <- ihtres$C$pvalue[[1]]
   C_R2org <- ihtres$C$R2.org
@@ -81,5 +90,11 @@ extract_iht <- function(ihtres){
   names(C_ure) <- paste0("C_ure_", names(C_ure))
   C_df <- cbind(C_df, t(as.data.frame(C_ure)))
 
-  ihtres_df <- cbind(global_df, A_df, B_df, C_df)
+  # Get dataframe information
+  df_info <- data.frame(modname = modname, constr = constr)
+
+  # Combine dataframes
+  ihtres_df <- cbind(df_info, global_df, A_df, B_df, C_df)
+
+  return(ihtres_df)
 }
