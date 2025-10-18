@@ -35,7 +35,8 @@ extract_iht <- function(ihtres, modname = "", constr = ""){
 
   global_df <- data.frame(global_Ts = global_Ts,
                           global_pval = global_pval,
-                          global_R2org = global_R2red)
+                          global_R2org = global_R2org,
+                          global_R2red = global_R2red)
 
   names(global_reuH0) <- paste0("global_reuH0_", names(global_reuH0))
   global_df <- cbind(global_df, t(as.data.frame(global_reuH0)))
@@ -50,9 +51,8 @@ extract_iht <- function(ihtres, modname = "", constr = ""){
   A_reuH0 <- ihtres$A$b.eqrestr
   A_reuHA <- ihtres$A$b.unrestr
 
-  A_df <- data.frame(A_Ts = A_Ts,
-                     A_pval = A_pval,
-                     A_R2org = A_R2red)
+  A_df <- data.frame(A_Ts = A_Ts, A_pval = A_pval,
+                     A_R2org = A_R2org, A_R2red = A_R2red)
 
   names(A_reuH0) <- paste0("A_reuH0_", names(A_reuH0))
   A_df <- cbind(A_df, t(as.data.frame(A_reuH0)))
@@ -67,9 +67,8 @@ extract_iht <- function(ihtres, modname = "", constr = ""){
   B_reuH0 <- ihtres$B$b.restr
   B_ure <- ihtres$B$b.unrestr
 
-  B_df <- data.frame(B_Ts = B_Ts,
-                     B_pval = B_pval,
-                     B_R2org = B_R2red)
+  B_df <- data.frame(B_Ts = B_Ts, B_pval = B_pval,
+                     B_R2org = B_R2org, B_R2red = B_R2red)
 
   names(B_reuH0) <- paste0("B_reuH0_", names(B_reuH0))
   B_df <- cbind(B_df, t(as.data.frame(B_reuH0)))
@@ -83,9 +82,8 @@ extract_iht <- function(ihtres, modname = "", constr = ""){
   C_R2red <- ihtres$C$R2.reduced
   C_ure <- ihtres$C$b.unrestr
 
-  C_df <- data.frame(C_Ts = C_Ts,
-                     C_pval = C_pval,
-                     C_R2org = C_R2red)
+  C_df <- data.frame(C_Ts = C_Ts, C_pval = C_pval,
+                     C_R2org = C_R2org, C_R2red = C_R2red)
 
   names(C_ure) <- paste0("C_ure_", names(C_ure))
   C_df <- cbind(C_df, t(as.data.frame(C_ure)))
