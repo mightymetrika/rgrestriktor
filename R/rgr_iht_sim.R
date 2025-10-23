@@ -33,6 +33,45 @@ rgr_iht_sim <- function(Its = 1000,
       dplyr::mutate(modname = "pairwise_t_test") |>
       dplyr::select(modname, p, p.adj, group1, group2, n1, n2)
 
+    # ---- NEW: enrich pairwise rows with direction & adjacency info ----
+    outcome   <- all.vars(.formula)[1]
+    rhs_terms <- attr(terms(.formula), "term.labels")
+    group_var <- rhs_terms[1]
+
+    # group means (for sign of difference)
+    means_df  <- dat |>
+      dplyr::group_by(!!rlang::sym(group_var)) |>
+      dplyr::summarise(.mean = mean(.data[[outcome]]), .groups = "drop") |>
+      dplyr::rename(group = !!group_var) |>
+      dplyr::mutate(group = as.character(group))
+
+    # Try to infer intended order. If groups look numeric, use that numeric order.
+    levs <- means_df$group
+    if (all(suppressWarnings(!is.na(as.numeric(levs))))) {
+      ord <- levs[order(as.numeric(levs))]
+    } else {
+      # fallback: alphabetical order of labels
+      ord <- sort(levs)
+    }
+    # adjacency map: consecutive elements in 'ord' are adjacent
+    adj_pairs <- tibble::tibble(
+      group1 = head(ord, -1),
+      group2 = tail(ord, -1)
+    )
+
+    pttest <- pttest |>
+      dplyr::mutate(group1 = as.character(group1),
+                    group2 = as.character(group2)) |>
+      dplyr::left_join(dplyr::rename(means_df, group1 = group, mean1 = .mean), by = "group1") |>
+      dplyr::left_join(dplyr::rename(means_df, group2 = group, mean2 = .mean), by = "group2") |>
+      dplyr::mutate(
+        diff   = mean2 - mean1,
+        dir_ok = diff > 0
+      ) |>
+      dplyr::left_join(dplyr::mutate(adj_pairs, adj = TRUE),
+                       by = c("group1","group2")) |>
+      dplyr::mutate(adj = dplyr::coalesce(adj, FALSE))
+
     # run IHT on the no-intercept model
     rgr_iht_res <- rgr_iht(mod_iht, rgcontraints = rgcontraints, constraints = constraints)
 
