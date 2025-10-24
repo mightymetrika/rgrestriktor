@@ -33,7 +33,7 @@ rgr_run_scenarios <- function(
 
     res <- rgr_iht_sim(
       Its = Its,
-      rgcontraints = sc$rgconstraints %||% NULL,
+      rgconstraints = sc$rgconstraints %||% NULL,  # <- fix spelling here
       constraints  = sc$constraints  %||% NULL,
       dgp          = sc$dgp,
       .formula     = sc$formula
@@ -55,70 +55,6 @@ rgr_run_scenarios <- function(
   out
 }
 
-
-##' Quick plot of power, grouped by family; optional caption for notes/abbrevs
-##'
-##' @param tbl  tibble from rgr_summarize() or rgr_run_scenarios()
-##' @param Its  iterations used (if provided, 95% & 68% Wilson CIs are drawn)
-##' @param drop_families families to drop from plotting
-##' @param caption optional string placed as plot caption (e.g., scenario abbrev legend)
-##' @return ggplot
-##' @export
-# rgr_plot_power <- function(tbl,
-#                            Its = NULL,
-#                            drop_families = c("RG-IHT strict (C&B)", "IHT strict (C&B)"),
-#                            caption = NULL) {
-#   requireNamespace("ggplot2", quietly = TRUE)
-#
-#   df <- dplyr::as_tibble(tbl)
-#   if (!("family" %in% names(df))) {
-#     stop("Expected a 'family' column; call rgr_summarize(...), which adds it.")
-#   }
-#
-#   if (!is.null(drop_families)) {
-#     df <- dplyr::filter(df, !.data$family %in% drop_families)
-#   }
-#
-#   # Wilson CI helper
-#   wilson <- function(p, n, z = 1.96) {
-#     if (is.null(n)) return(list(l = NA_real_, u = NA_real_))
-#     denom <- 1 + z^2 / n
-#     center <- (p + z^2/(2*n)) / denom
-#     half   <- z * sqrt((p*(1-p) + z^2/(4*n)) / n) / denom
-#     list(l = pmax(0, center - half), u = pmin(1, center + half))
-#   }
-#
-#   if (!is.null(Its)) {
-#     ci95 <- wilson(df$power, Its, z = 1.96)
-#     ci68 <- wilson(df$power, Its, z = 1.00)
-#     df$lo95 <- ci95$l; df$hi95 <- ci95$u
-#     df$lo68 <- ci68$l; df$hi68 <- ci68$u
-#   }
-#
-#   # Reorder within family by power
-#   df <- df |>
-#     dplyr::group_by(.data$family) |>
-#     dplyr::mutate(modname_ord = reorder(.data$modname, .data$power, FUN = mean)) |>
-#     dplyr::ungroup()
-#
-#   p <- ggplot2::ggplot(df, ggplot2::aes(x = modname_ord, y = power, fill = family)) +
-#     ggplot2::geom_col(width = 0.72) +
-#     { if (!is.null(Its)) ggplot2::geom_errorbar(ggplot2::aes(ymin = lo95, ymax = hi95), width = 0, alpha = 0.45) } +
-#     { if (!is.null(Its)) ggplot2::geom_errorbar(ggplot2::aes(ymin = lo68, ymax = hi68), width = 0, alpha = 0.8, linewidth = 1) } +
-#     ggplot2::coord_flip() +
-#     ggplot2::facet_wrap(~ family, ncol = 2, scales = "free_y") +
-#     ggplot2::scale_y_continuous(labels = function(x) paste0(round(100*x), "%"), limits = c(0,1)) +
-#     ggplot2::labs(x = NULL, y = "Power", fill = NULL, caption = caption) +
-#     ggplot2::theme_minimal(base_size = 12) +
-#     ggplot2::theme(panel.grid.major.y = ggplot2::element_blank(),
-#                    panel.grid.minor = ggplot2::element_blank(),
-#                    legend.position = "none",
-#                    strip.text = ggplot2::element_text(face = "bold"))
-#
-#   p
-# }
-
-
 #' Quick plot of power, grouped by family; optional caption and scenario facets
 #'
 #' @param tbl tibble from rgr_summarize() or rgr_run_scenarios()
@@ -135,19 +71,81 @@ rgr_plot_power <- function(tbl,
                            Its = NULL,
                            drop_families = c("RG-IHT strict (C&B)", "IHT strict (C&B)"),
                            caption = NULL,
-                           facet_by = c("auto","family","scenario","both"),
+                           facet_by = c("auto","family","scenario","both","none"),
                            scenario_labels = NULL,
                            order_scenarios = NULL,
-                           order_families = NULL) {
-  requireNamespace("ggplot2", quietly = TRUE)
-  facet_by <- match.arg(facet_by)
+                           order_families = NULL,
+                           strip_right = TRUE,
+                           separate = c("none","scenario","family","both"),
+                           ...) {
 
+  facet_by <- match.arg(facet_by)
+  separate <- match.arg(separate)
+
+  # -- internal helpers (no new deps) -----------------------------------------
+  .reorder_within <- function(x, by, within, fun = mean, desc = TRUE, sep = "___") {
+    # x: character/factor; by: numeric; within: data.frame of facet vars
+    w <- interaction(within, drop = TRUE)
+    x_chr <- as.character(x)
+    x_w <- paste(x_chr, w, sep = sep)
+    o <- if (desc) stats::reorder(x_w, -by, FUN = fun) else stats::reorder(x_w, by, FUN = fun)
+    o
+  }
+  .scale_x_reordered <- function(..., sep = "___") {
+    ggplot2::scale_x_discrete(labels = function(x) sub(paste0(sep, ".*$"), "", x), ...)
+  }
+
+  # --- "separate" mode: split first, then plot with *sensible* facets ----------
+  if (separate != "none") {
+    df <- dplyr::as_tibble(tbl)
+
+    split_vars <- switch(
+      separate,
+      scenario = "scenario",
+      family   = "family",
+      both     = c("scenario","family")
+    )
+    split_vars <- split_vars[split_vars %in% names(df)]
+    stopifnot(length(split_vars) > 0L)
+
+    # preserve user’s facet intent as much as possible
+    local_facet <- facet_by
+    if (separate == "scenario" && facet_by %in% c("auto","both")) local_facet <- "family"
+    if (separate == "family"   && facet_by %in% c("auto","both")) local_facet <- "scenario"
+    if (separate == "both") local_facet <- "none"
+
+    grp_keys <- unique(df[split_vars])
+    out <- vector("list", nrow(grp_keys))
+    nm  <- apply(grp_keys, 1, function(r) paste0(names(r), "=", unname(unlist(r)), collapse = " | "))
+
+    for (i in seq_len(nrow(grp_keys))) {
+      idx <- rep(TRUE, nrow(df))
+      for (v in split_vars) idx <- idx & df[[v]] == grp_keys[[v]][i]
+      out[[i]] <- rgr_plot_power(
+        df[idx, , drop = FALSE],
+        Its = Its,
+        caption = caption,
+        facet_by = local_facet,
+        scenario_labels = scenario_labels,
+        order_scenarios = order_scenarios,
+        order_families  = order_families,
+        strip_right = strip_right,
+        separate = "none",
+        ...
+      )
+    }
+    names(out) <- nm
+    class(out) <- c("rgr_plot_list","list")
+    return(out)
+  }
+
+  # -------------------- standard path (no splitting) --------------------------
   df <- dplyr::as_tibble(tbl)
-  stopifnot("family" %in% names(df), "scenario" %in% names(df))
+  stopifnot("family" %in% names(df), "scenario" %in% names(df), "modname" %in% names(df), "power" %in% names(df))
 
   if (!is.null(drop_families)) df <- dplyr::filter(df, !.data$family %in% drop_families)
 
-  # scenario display + ordering
+  # scenario labels + ordering (preserve original order unless user overrides)
   orig_levels <- if (is.factor(df$scenario)) levels(df$scenario) else unique(df$scenario)
   df$scenario_display <- as.character(df$scenario)
   if (!is.null(scenario_labels)) {
@@ -161,32 +159,38 @@ rgr_plot_power <- function(tbl,
   scen_levels <- if (is.null(order_scenarios)) default_ord else order_scenarios
   df$scenario_display <- factor(df$scenario_display, levels = scen_levels)
 
-  # family ordering
+  # family ordering (optional)
   if (!is.null(order_families)) df$family <- factor(df$family, levels = order_families)
 
-  # CIs
-  wilson <- function(p, n, z = 1.96) {
-    if (is.null(n)) return(list(l = NA_real_, u = NA_real_))
-    denom <- 1 + z^2 / n
-    center <- (p + z^2/(2*n)) / denom
-    half   <- z * sqrt((p*(1-p) + z^2/(4*n)) / n) / denom
-    list(l = pmax(0, center - half), u = pmin(1, center + half))
-  }
+  # 95%/68% Wilson CIs (same as before)
   if (!is.null(Its)) {
+    wilson <- function(p, n, z) {
+      denom  <- 1 + z^2 / n
+      center <- (p + z^2/(2*n)) / denom
+      half   <- z * sqrt((p*(1-p) + z^2/(4*n)) / n) / denom
+      list(l = pmax(0, center - half), u = pmin(1, center + half))
+    }
     ci95 <- wilson(df$power, Its, z = 1.96)
     ci68 <- wilson(df$power, Its, z = 1.00)
     df$lo95 <- ci95$l; df$hi95 <- ci95$u
     df$lo68 <- ci68$l; df$hi68 <- ci68$u
   }
 
-  df <- df |>
-    dplyr::group_by(.data$family) |>
-    dplyr::mutate(modname_ord = reorder(.data$modname, .data$power, FUN = mean)) |>
-    dplyr::ungroup()
-
-  # choose faceting
-  if (facet_by == "auto") {
-    facet_by <- if (length(levels(df$scenario_display)) > 1) "both" else "family"
+  # Decide what "within" means for reordering the bars
+  within_vars <- switch(
+    facet_by,
+    family   = c("family"),
+    scenario = c("scenario_display"),
+    both     = c("family","scenario_display"),
+    auto     = if (length(levels(df$scenario_display)) > 1) c("family","scenario_display") else c("family"),
+    none     = character(0)
+  )
+  # compute facet-aware x with descending power
+  if (length(within_vars)) {
+    df$modname_ord <- .reorder_within(df$modname, df$power, df[within_vars], fun = mean, desc = TRUE)
+  } else {
+    # no facets: one global order
+    df$modname_ord <- stats::reorder(df$modname, -df$power, FUN = mean)
   }
 
   base <- ggplot2::ggplot(df, ggplot2::aes(x = modname_ord, y = power, fill = family)) +
@@ -195,91 +199,173 @@ rgr_plot_power <- function(tbl,
     { if (!is.null(Its)) ggplot2::geom_errorbar(ggplot2::aes(ymin = lo68, ymax = hi68), width = 0, alpha = 0.8, linewidth = 1) } +
     ggplot2::coord_flip() +
     ggplot2::scale_y_continuous(labels = function(x) paste0(round(100*x), "%"), limits = c(0,1)) +
+    .scale_x_reordered() +
     ggplot2::labs(x = NULL, y = "Power", fill = NULL, caption = caption) +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(panel.grid.major.y = ggplot2::element_blank(),
-                   panel.grid.minor = ggplot2::element_blank(),
-                   legend.position = "none",
-                   strip.text = ggplot2::element_text(face = "bold"))
+                   panel.grid.minor   = ggplot2::element_blank(),
+                   legend.position    = "none",
+                   strip.text         = ggplot2::element_text(face = "bold"))
 
-  p <- switch(facet_by,
-              family   = base + ggplot2::facet_wrap(~ family, ncol = 2, scales = "free_y"),
-              scenario = base + ggplot2::facet_wrap(~ scenario_display, ncol = 2, scales = "free_y"),
-              both     = base + ggplot2::facet_grid(rows = ggplot2::vars(family),
-                                                    cols  = ggplot2::vars(scenario_display), scales = "free_y")
+  # choose faceting
+  if (facet_by == "auto") {
+    facet_by <- if (length(levels(df$scenario_display)) > 1) "both" else "family"
+  }
+  p <- switch(
+    facet_by,
+    family   = base + ggplot2::facet_wrap(~ family, ncol = 2, scales = "free_y"),
+    scenario = base + ggplot2::facet_wrap(~ scenario_display, ncol = 2, scales = "free_y"),
+    both     = base + ggplot2::facet_grid(rows = ggplot2::vars(family),
+                                          cols  = ggplot2::vars(scenario_display),
+                                          scales = "free_y"),
+    none     = base
   )
+
+  if (!strip_right) {
+    p <- p + ggplot2::theme(
+      strip.text.y       = ggplot2::element_blank(),
+      strip.text.y.right = ggplot2::element_blank(),
+      strip.text.y.left  = ggplot2::element_blank(),
+      strip.background.y = ggplot2::element_blank()
+    )
+  }
+
   p
 }
-
-
-
-##' Pretty gt table for power (grouped by *scenario* or *family*)
-##'
-##' @param tbl tibble from rgr_summarize() or rgr_run_scenarios()
-##' @param digits number of digits for power
-##' @param group_by which column to use as row-group header: "scenario" (default) or "family"
-##' @param scenario_abbrev optional named character vector mapping
-##'   full scenario names -> abbreviations (e.g., c("Middle inversion Δ=1, n=5"="MID"))
-##'   If supplied, the table will display the *abbreviation*; a note is added automatically.
-##' @param notes optional character string to append as a source note
-##'              (if omitted and scenario_abbrev is supplied, an auto note is built)
-##' @return gt table object
-##' @export
-# rgr_gt_power <- function(tbl,
-#                          digits = 3,
-#                          group_by = c("scenario", "family"),
-#                          scenario_abbrev = NULL,
-#                          notes = NULL) {
-#   requireNamespace("gt", quietly = TRUE)
+# rgr_plot_power <- function(tbl,
+#                            Its = NULL,
+#                            drop_families = c("RG-IHT strict (C&B)", "IHT strict (C&B)"),
+#                            caption = NULL,
+#                            facet_by = c("auto","family","scenario","both","none"),
+#                            scenario_labels = NULL,
+#                            order_scenarios = NULL,
+#                            order_families = NULL,
+#                            strip_right = TRUE,
+#                            separate = c("none","scenario","family","both"),
+#                            ...) {
 #
-#   group_by <- match.arg(group_by)
-#   df <- dplyr::as_tibble(tbl)
+#   facet_by  <- match.arg(facet_by)
+#   separate  <- match.arg(separate)
 #
-#   if (!all(c("scenario","family","modname","power") %in% names(df))) {
-#     stop("Expected columns: scenario, family, modname, power. Did you pass rgr_summarize()/rgr_run_scenarios() output?")
-#   }
+#   # --- NEW: "separate" mode (returns a named list of ggplots) ---
+#   if (separate != "none") {
+#     split_vars <- switch(
+#       separate,
+#       scenario = "scenario",
+#       family   = "family",
+#       both     = c("scenario","family")
+#     )
+#     df <- dplyr::as_tibble(tbl)            # ensure df exists here too
+#     split_vars <- split_vars[split_vars %in% names(df)]
+#     stopifnot(length(split_vars) > 0L)
 #
-#   # Optional: replace scenario names with abbreviations for display
-#   if (!is.null(scenario_abbrev)) {
-#     df$scenario <- as.character(df$scenario)
-#     look <- names(scenario_abbrev)
-#     repl <- unname(scenario_abbrev[ df$scenario ])
-#     df$scenario <- ifelse(is.na(repl), df$scenario, repl)
-#   }
-#
-#   # Arrange for readability
-#   if (group_by == "scenario") {
-#     ord <- df |>
-#       dplyr::arrange(.data$scenario, .data$family, dplyr::desc(.data$power))
-#   } else {
-#     ord <- df |>
-#       dplyr::arrange(.data$family, .data$scenario, dplyr::desc(.data$power))
-#   }
-#
-#   # Build the table, grouping by the chosen column
-#   gt_tbl <- gt::gt(ord, groupname_col = group_by) |>
-#     gt::fmt_number(columns = "power", decimals = digits) |>
-#     gt::tab_options(
-#       table.border.top.width = gt::px(0),
-#       table.border.bottom.width = gt::px(0),
-#       row.striping.include_table_body = TRUE
-#     ) |>
-#     gt::cols_label(
-#       scenario = "Scenario",
-#       family   = "Family",
-#       modname  = "Model",
-#       power    = "Power"
+#     grp_keys <- unique(df[split_vars])
+#     out <- vector("list", nrow(grp_keys))
+#     nm  <- apply(grp_keys, 1, function(r)
+#       paste0(names(r), "=", unname(unlist(r)), collapse = " | ")
 #     )
 #
-#   # Auto-note for scenario abbreviations, unless user supplies their own 'notes'
-#   if (is.null(notes) && !is.null(scenario_abbrev)) {
-#     auto <- paste(paste0(scenario_abbrev, " = ", names(scenario_abbrev)), collapse = "  ·  ")
-#     gt_tbl <- gt_tbl |> gt::tab_source_note(auto)
-#   } else if (!is.null(notes)) {
-#     gt_tbl <- gt_tbl |> gt::tab_source_note(notes)
+#     for (i in seq_len(nrow(grp_keys))) {
+#       idx <- rep(TRUE, nrow(df))
+#       for (v in split_vars) idx <- idx & df[[v]] == grp_keys[[v]][i]
+#       out[[i]] <- rgr_plot_power(
+#         df[idx, , drop = FALSE],
+#         Its = Its,
+#         caption = caption,
+#         facet_by = "none",
+#         scenario_labels = scenario_labels,
+#         order_scenarios = order_scenarios,
+#         strip_right = strip_right,
+#         separate = "none",
+#         ...
+#       )
+#     }
+#     names(out) <- nm
+#     class(out) <- c("rgr_plot_list","list")
+#     return(out)
 #   }
 #
-#   gt_tbl
+#
+#
+#   df <- dplyr::as_tibble(tbl)
+#   stopifnot("family" %in% names(df), "scenario" %in% names(df))
+#
+#   if (!is.null(drop_families)) df <- dplyr::filter(df, !.data$family %in% drop_families)
+#
+#   # scenario display + ordering
+#   orig_levels <- if (is.factor(df$scenario)) levels(df$scenario) else unique(df$scenario)
+#   df$scenario_display <- as.character(df$scenario)
+#   if (!is.null(scenario_labels)) {
+#     lab <- unname(scenario_labels[df$scenario_display])
+#     df$scenario_display <- ifelse(is.na(lab), df$scenario_display, lab)
+#   }
+#   default_ord <- df |>
+#     dplyr::distinct(scenario, scenario_display) |>
+#     dplyr::arrange(factor(.data$scenario, levels = orig_levels)) |>
+#     dplyr::pull(scenario_display)
+#   scen_levels <- if (is.null(order_scenarios)) default_ord else order_scenarios
+#   df$scenario_display <- factor(df$scenario_display, levels = scen_levels)
+#
+#   # family ordering
+#   if (!is.null(order_families)) df$family <- factor(df$family, levels = order_families)
+#
+#   # CIs
+#   wilson <- function(p, n, z = 1.96) {
+#     if (is.null(n)) return(list(l = NA_real_, u = NA_real_))
+#     denom <- 1 + z^2 / n
+#     center <- (p + z^2/(2*n)) / denom
+#     half   <- z * sqrt((p*(1-p) + z^2/(4*n)) / n) / denom
+#     list(l = pmax(0, center - half), u = pmin(1, center + half))
+#   }
+#   if (!is.null(Its)) {
+#     ci95 <- wilson(df$power, Its, z = 1.96)
+#     ci68 <- wilson(df$power, Its, z = 1.00)
+#     df$lo95 <- ci95$l; df$hi95 <- ci95$u
+#     df$lo68 <- ci68$l; df$hi68 <- ci68$u
+#   }
+#
+#   df <- df |>
+#     dplyr::group_by(.data$family) |>
+#     dplyr::mutate(modname_ord = reorder(.data$modname, .data$power, FUN = mean)) |>
+#     dplyr::ungroup()
+#
+#   # choose faceting
+#   if (facet_by == "auto") {
+#     facet_by <- if (length(levels(df$scenario_display)) > 1) "both" else "family"
+#   }
+#
+#   base <- ggplot2::ggplot(df, ggplot2::aes(x = modname_ord, y = power, fill = family)) +
+#     ggplot2::geom_col(width = 0.72) +
+#     { if (!is.null(Its)) ggplot2::geom_errorbar(ggplot2::aes(ymin = lo95, ymax = hi95), width = 0, alpha = 0.45) } +
+#     { if (!is.null(Its)) ggplot2::geom_errorbar(ggplot2::aes(ymin = lo68, ymax = hi68), width = 0, alpha = 0.8, linewidth = 1) } +
+#     ggplot2::coord_flip() +
+#     ggplot2::scale_y_continuous(labels = function(x) paste0(round(100*x), "%"), limits = c(0,1)) +
+#     ggplot2::labs(x = NULL, y = "Power", fill = NULL, caption = caption) +
+#     ggplot2::theme_minimal(base_size = 12) +
+#     ggplot2::theme(panel.grid.major.y = ggplot2::element_blank(),
+#                    panel.grid.minor = ggplot2::element_blank(),
+#                    legend.position = "none",
+#                    strip.text = ggplot2::element_text(face = "bold"))
+#
+#   p <- switch(facet_by,
+#               family   = base + ggplot2::facet_wrap(~ family, ncol = 2, scales = "free_y"),
+#               scenario = base + ggplot2::facet_wrap(~ scenario_display, ncol = 2, scales = "free_y"),
+#               both     = base + ggplot2::facet_grid(rows = ggplot2::vars(family),
+#                                                     cols  = ggplot2::vars(scenario_display),
+#                                                     scales = "free_y"),
+#               none     = base
+#   )
+#
+#   if (!strip_right) {
+#     p <- p + ggplot2::theme(
+#       strip.text.y        = ggplot2::element_blank(),
+#       strip.text.y.right  = ggplot2::element_blank(),
+#       strip.text.y.left   = ggplot2::element_blank(),
+#       strip.background.y  = ggplot2::element_blank()
+#     )
+#   }
+#
+#   return(p)
 # }
 
 
@@ -307,7 +393,9 @@ rgr_gt_power <- function(tbl,
                          order_scenarios = NULL,
                          order_families  = NULL,
                          notes = NULL,
-                         show_scenario = TRUE) {
+                         show_scenario = TRUE,
+                         separate = c("none","scenario","family"),
+                         ...) {
   requireNamespace("gt", quietly = TRUE)
   group_by <- match.arg(group_by)
 
@@ -344,6 +432,30 @@ rgr_gt_power <- function(tbl,
     ord <- df |>
       dplyr::arrange(.data$family, factor(.data$scenario, levels = orig_levels), dplyr::desc(.data$power))
   }
+
+  separate <- match.arg(separate)
+  if (separate != "none") {
+    split_var <- separate
+    stopifnot(split_var %in% names(df))
+    sp  <- split(df, df[[split_var]], drop = TRUE)
+    out <- lapply(sp, function(dfi) {
+      rgr_gt_power(
+        dfi,
+        group_by = group_by,
+        scenario_labels = scenario_labels,
+        order_scenarios = order_scenarios,
+        order_families  = order_families,
+        notes = notes,
+        show_scenario = show_scenario,
+        separate = "none",
+        ...
+      )
+    })
+    class(out) <- c("rgr_gt_list","list")
+    return(out)
+  }
+
+
 
   # Build table. Use groupname_col = chosen header; keep both Scenario/Family columns visible by default.
   gt_tbl <- gt::gt(

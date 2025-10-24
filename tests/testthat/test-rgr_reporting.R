@@ -1,5 +1,5 @@
 test_that("multiplication works", {
-  set.seed(55)
+
   iterations <- 1000
   k <- 5; levs <- as.character(seq_len(k))
 
@@ -58,7 +58,8 @@ test_that("multiplication works", {
     scenario_labels = abbr,
     order_scenarios = c("MON","MID"),
     notes = cap,
-    show_scenario = FALSE
+    show_scenario = FALSE,
+    separate = "scenario"
   )
 
   # Plot: facet by both family and scenario (MON left, MID right)
@@ -66,7 +67,9 @@ test_that("multiplication works", {
     summ, Its = iterations, caption = cap,
     facet_by = "both",
     scenario_labels = abbr,
-    order_scenarios = c("MON","MID")
+    order_scenarios = c("MON","MID"),
+    strip_right = FALSE,
+    separate = "scenario"
   )
 
 
